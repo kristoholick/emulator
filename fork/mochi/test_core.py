@@ -114,11 +114,53 @@ class CoreTests(unittest.TestCase):
         core.remove_game_folder(self.tmp, str(self.tmp / "games"))
         self.assertEqual(core.game_folders(self.tmp), [])
 
-    def test_fullscreen(self):
-        core.set_fullscreen(self.tmp, True)
-        gpu = core.read_json(self.tmp / "config.json")["GPU"]
-        self.assertEqual(gpu["full_screen_mode"], "Fullscreen (Borderless)")
-        self.assertTrue(gpu["full_screen"])
+    def test_graphics_defaults_match_shadps4(self):
+        # With an empty config.json every setting shows shadPS4's own default
+        for section in core.graphics_state({}):
+            for setting in section["settings"]:
+                self.assertIsNotNone(setting["current"], setting["id"])
+
+    def test_graphics_option_writes_exact_keys(self):
+        (self.tmp / "config.json").write_text(json.dumps({"GPU": {"window_width": 1600}}))
+        core.apply_graphics_option(self.tmp, "display_mode", 1)
+        core.apply_graphics_option(self.tmp, "anisotropic_filtering", 5)
+        config = core.read_json(self.tmp / "config.json")
+        self.assertEqual(config["GPU"]["full_screen_mode"], "Fullscreen (Borderless)")
+        self.assertTrue(config["GPU"]["full_screen"])
+        self.assertEqual(config["GPU"]["anisotropic_filtering"], 16)
+        self.assertEqual(config["GPU"]["window_width"], 1600)
+        state = {s["id"]: s["current"] for section in core.graphics_state(config) for s in section["settings"]}
+        self.assertEqual(state["display_mode"], 1)
+        self.assertEqual(state["anisotropic_filtering"], 5)
+        self.assertIsNone(state["window_size"])  # 1600 wide with the default 720 height isn't a listed size
+
+    def test_graphics_marks_settings_presets_change(self):
+        by_preset = {s["id"]: s["byPreset"] for section in core.graphics_state({}, self.presets)
+                     for s in section["settings"]}
+        self.assertTrue(by_preset["upscaling"])
+        self.assertTrue(by_preset["shader_cache"])
+        self.assertFalse(by_preset["display_mode"])
+        self.assertFalse(by_preset["anisotropic_filtering"])
+
+    def test_graphics_rejects_unknown_choices(self):
+        with self.assertRaises(ValueError):
+            core.apply_graphics_option(self.tmp, "no_such_setting", 0)
+        with self.assertRaises(ValueError):
+            core.apply_graphics_option(self.tmp, "vsync", 9)
+
+    def test_graphics_options_are_distinct(self):
+        for section in core.GRAPHICS_SECTIONS:
+            for setting in section["settings"]:
+                for i, option in enumerate(setting["options"]):
+                    self.assertEqual(core.current_option(option["values"], setting), i, setting["id"])
+
+    def test_presets_use_known_graphics_values(self):
+        # Every preset value must be one a graphics option can show
+        for preset in self.presets.values():
+            for setting in (s for section in core.GRAPHICS_SECTIONS for s in section["settings"]):
+                keys = {(g, k) for o in setting["options"] for g, values in o["values"].items() for k in values}
+                if all(preset["settings"].get(g, {}).get(k) is not None for g, k in keys):
+                    self.assertIsNotNone(core.current_option(preset["settings"], setting), setting["id"])
 
     def test_integrated_gpu_gets_performance(self):
         hw = core.Hardware(gpus=[{"name": "AMD Radeon(TM) Graphics", "hz": 180, "width": 1920, "height": 1080}], ram_gb=11.9)
@@ -128,6 +170,32 @@ class CoreTests(unittest.TestCase):
         hw.gpus.append({"name": "NVIDIA GeForce RTX 4060", "hz": 144, "width": 2560, "height": 1440})
         self.assertFalse(hw.integrated)
         self.assertEqual(core.recommend_preset(hw), "balanced")
+
+    def test_reference_pc_is_recognised(self):
+        hw = core.Hardware(cpu="AMD Ryzen 5 5600G with Radeon Graphics", cores=6, threads=12, ram_gb=11.9,
+                           gpus=[{"name": "AMD Radeon(TM) Graphics", "hz": 180, "width": 1920, "height": 1080}])
+        self.assertTrue(hw.is_reference_pc)
+        self.assertEqual(core.recommend_preset(hw), "performance")
+        self.assertEqual(len(core.hardware_notes(hw)), 1)
+        warnings = core.hardware_warnings(hw)
+        self.assertIn("Vega 7", warnings[0])
+        self.assertIn("11.9 GB", warnings[1])
+
+    def test_basic_intel_laptop_gets_its_own_warnings(self):
+        hw = core.Hardware(cpu="Intel(R) Core(TM) i5-8265U CPU @ 1.60GHz", cores=4, threads=8, ram_gb=15.9,
+                           gpus=[{"name": "Intel(R) UHD Graphics 620", "hz": 60, "width": 1920, "height": 1080}])
+        self.assertFalse(hw.is_reference_pc)
+        self.assertEqual(core.recommend_preset(hw), "performance")
+        self.assertEqual(core.hardware_notes(hw), [])
+        warnings = core.hardware_warnings(hw)
+        self.assertEqual(len(warnings), 2)
+        self.assertTrue(warnings[0].startswith("Intel(R) UHD Graphics 620 is much slower"))
+        self.assertIn("low-power laptop CPU", warnings[1])
+
+    def test_missing_gpu_driver_is_flagged(self):
+        hw = core.Hardware(cpu="AMD Ryzen 5 5600G with Radeon Graphics", ram_gb=16,
+                           gpus=[{"name": "Microsoft Basic Display Adapter", "hz": 60, "width": 1024, "height": 768}])
+        self.assertIn("no graphics driver", core.hardware_warnings(hw)[0])
 
     def test_launch_command(self):
         cmd = core.launch_command(Path("C:/x/shadps4.exe"), game_path=Path("D:/g"), show_fps=True)

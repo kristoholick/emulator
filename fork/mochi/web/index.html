@@ -34,11 +34,10 @@
     <aside class="side">
       <section class="panel">
         <h2>How games run</h2>
-        <p class="hint">Applies to every game unless a game has its own choice.</p>
+        <p class="hint">Applies to every game unless a game has its own choice. A preset changes the settings tagged <span class="chip">Preset</span> under Graphics &amp; Display.</p>
         <div class="presets" id="presets" role="radiogroup" aria-label="Default preset"></div>
         <ul class="details" id="preset-details"></ul>
         <div class="toggles">
-          <label class="toggle"><input type="checkbox" id="fullscreen"><span class="track"></span>Fullscreen</label>
           <label class="toggle"><input type="checkbox" id="show-fps"><span class="track"></span>Show FPS counter</label>
         </div>
       </section>
@@ -52,16 +51,27 @@
 
     <section class="games">
       <div class="games-head">
-        <h2>Your games</h2>
+        <div class="tabs" role="tablist" aria-label="Mochi sections">
+          <button type="button" role="tab" id="tab-games" aria-controls="games-view" aria-selected="true">Your games</button>
+          <button type="button" role="tab" id="tab-graphics" aria-controls="graphics-view" aria-selected="false">Graphics &amp; Display</button>
+        </div>
         <button class="soft" id="add-folder" type="button">+ Add game folder</button>
       </div>
-      <div class="folders" id="folders"></div>
-      <div class="grid" id="grid"></div>
-      <div class="empty" id="empty" hidden>
-        <div class="mascot sleepy" id="empty-mascot" aria-hidden="true"></div>
-        <h3>No games yet</h3>
-        <p>Add the folder where your PS4 game dumps live. Each game folder has an <code>eboot.bin</code> and a <code>sce_sys</code> folder inside.</p>
-        <button class="primary" id="empty-add" type="button">Add game folder</button>
+
+      <div id="games-view" role="tabpanel" aria-labelledby="tab-games">
+        <div class="folders" id="folders"></div>
+        <div class="grid" id="grid"></div>
+        <div class="empty" id="empty" hidden>
+          <div class="mascot sleepy" id="empty-mascot" aria-hidden="true"></div>
+          <h3>No games yet</h3>
+          <p>Add the folder where your PS4 game dumps live. Each game folder has an <code>eboot.bin</code> and a <code>sce_sys</code> folder inside.</p>
+          <button class="primary" id="empty-add" type="button">Add game folder</button>
+        </div>
+      </div>
+
+      <div id="graphics-view" role="tabpanel" aria-labelledby="tab-graphics" hidden>
+        <p class="hint gfx-intro">These are the settings the shadPS4 engine really applies to every game. Changes take effect the next time a game starts. Picking a preset under “How games run” resets the settings it covers, and a game's own preset overrides them for that game.</p>
+        <div class="gfx" id="graphics"></div>
       </div>
     </section>
   </main>

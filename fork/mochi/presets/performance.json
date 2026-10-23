@@ -1,6 +1,6 @@
 {
   "name": "Performance",
-  "summary": "Fastest. Best for integrated graphics such as the Ryzen 5600G's Vega 7.",
+  "summary": "Fastest. Best for integrated graphics; tuned on a Ryzen 5 5600G's Vega 7.",
   "details": [
     "Fast shader math: fused multiply-add and no NaN/Inf preservation in pixel and compute shaders",
     "No FSR or sharpening pass, which saves GPU time every frame",

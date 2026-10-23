@@ -38,6 +38,8 @@ class State:
         self.games = []
         self.hardware = None
         self.last_ping = time.monotonic()
+        self.open_windows = 0
+        self.windows_lock = threading.Lock()
         self.dialog_lock = threading.Lock()
 
     @property
@@ -64,7 +66,7 @@ def snapshot():
         "presets": [{"id": pid, "name": p["name"], "summary": p["summary"], "details": p["details"]}
                     for pid, p in state.presets.items()],
         "preset": core.matching_preset(config, state.presets),
-        "fullscreen": state.settings["fullscreen"],
+        "graphics": core.graphics_state(config, state.presets),
         "showFps": state.settings["show_fps"],
         "folders": folders,
         "games": [{
@@ -92,6 +94,7 @@ def hardware_info():
         "integrated": hw.integrated,
         "display": {"width": gpu["width"], "height": gpu["height"], "hz": gpu["hz"]},
         "recommended": core.recommend_preset(hw),
+        "notes": core.hardware_notes(hw),
         "warnings": core.hardware_warnings(hw),
     }
 
@@ -130,10 +133,11 @@ def act_preset(body):
     core.apply_global_preset(state.udir, state.presets[body["preset"]])
 
 
+def act_graphics(body):
+    core.apply_graphics_option(state.udir, body["setting"], body["option"])
+
+
 def act_options(body):
-    if "fullscreen" in body:
-        state.settings["fullscreen"] = bool(body["fullscreen"])
-        core.set_fullscreen(state.udir, state.settings["fullscreen"])
     if "showFps" in body:
         state.settings["show_fps"] = bool(body["showFps"])
     save_settings()
@@ -178,13 +182,46 @@ def act_choose_exe(_body):
         save_settings()
 
 
+def bring_explorer_to_front(folder, timeout=3.0):
+    """Windows only lets the app you're using raise windows, so Explorer opens behind Mochi.
+    A tap of Alt counts as input from this process, which lets it raise the new window."""
+    import ctypes
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    title = f"{folder.name} - File Explorer"
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def visit(hwnd, _):
+        cls = ctypes.create_unicode_buffer(64)
+        text = ctypes.create_unicode_buffer(512)
+        user32.GetClassNameW(hwnd, cls, 64)
+        user32.GetWindowTextW(hwnd, text, 512)
+        if cls.value == "CabinetWClass" and text.value == title and user32.IsWindowVisible(hwnd):
+            found.append(hwnd)
+        return True
+
+    deadline = time.monotonic() + timeout
+    while not found and time.monotonic() < deadline:
+        time.sleep(0.1)
+        user32.EnumWindows(visit, 0)
+    if found:
+        user32.keybd_event(0x12, 0, 0, 0)  # Alt down
+        user32.keybd_event(0x12, 0, 2, 0)  # Alt up
+        user32.ShowWindow(found[0], 9)     # SW_RESTORE
+        user32.SetForegroundWindow(found[0])
+
+
 def act_open_config(_body):
     state.udir.mkdir(parents=True, exist_ok=True)
     os.startfile(state.udir)
+    bring_explorer_to_front(state.udir)
 
 
 ACTIONS = {
     "/api/preset": act_preset,
+    "/api/graphics": act_graphics,
     "/api/options": act_options,
     "/api/game-preset": act_game_preset,
     "/api/folders/add": act_add_folder,
@@ -211,6 +248,26 @@ class Handler(BaseHTTPRequestHandler):
     def send_json(self, data, status=200):
         self.send_body(json.dumps(data).encode(), "application/json", status)
 
+    def stream_alive(self):
+        """Held open by the window. Edge throttles timers in hidden windows, but not open connections."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        with state.windows_lock:
+            state.open_windows += 1
+        try:
+            while True:
+                self.wfile.write(b": alive\n\n")
+                self.wfile.flush()
+                time.sleep(5)
+        except OSError:
+            pass
+        finally:
+            with state.windows_lock:
+                state.open_windows -= 1
+            state.last_ping = time.monotonic()
+
     def authorized(self, url):
         given = self.headers.get("X-Mochi-Token") or parse_qs(url.query).get("t", [""])[0]
         if secrets.compare_digest(given, TOKEN):
@@ -229,8 +286,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(snapshot())
                 if url.path == "/api/hardware":
                     return self.send_json(hardware_info())
-                if url.path == "/api/ping":
-                    return self.send_json({"ok": True})
+                if url.path == "/api/alive":
+                    return self.stream_alive()
                 if url.path.startswith("/api/icon/"):
                     game = game_by_id(int(url.path.rsplit("/", 1)[1]))
                     icon = game.path / "sce_sys" / "icon0.png"
@@ -292,7 +349,7 @@ def main():
     else:
         open_window(url)
     state.last_ping = time.monotonic()
-    while time.monotonic() - state.last_ping < IDLE_EXIT_SECONDS:
+    while state.open_windows or time.monotonic() - state.last_ping < IDLE_EXIT_SECONDS:
         time.sleep(1)
     server.shutdown()
 

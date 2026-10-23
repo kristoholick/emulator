@@ -9,11 +9,16 @@ let hardware = null;
 let selectedId = null;
 
 async function api(path, body) {
-  const res = await fetch(path, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers: { 'X-Mochi-Token': token, 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res;
+  try {
+    res = await fetch(path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: { 'X-Mochi-Token': token, 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new Error('Mochi has stopped running. Close this window and open Mochi again.');
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
@@ -24,8 +29,33 @@ async function act(path, body = {}, success) {
     state = await api(path, body);
     render();
     if (success) toast(success);
+    return true;
   } catch (err) {
     toast(err.message, true);
+    return false;
+  }
+}
+
+function graphicsChoices() {
+  const choices = {};
+  for (const section of state.graphics) {
+    for (const setting of section.settings) choices[setting.id] = setting;
+  }
+  return choices;
+}
+
+// Presets rewrite some Graphics & Display settings; say which ones and highlight them
+async function applyPreset(preset) {
+  const before = graphicsChoices();
+  if (!await act('/api/preset', { preset: preset.id })) return;
+  const changed = Object.values(graphicsChoices()).filter(s => before[s.id]?.current !== s.current);
+  toast(changed.length
+    ? `${preset.name} is now the default. Changed: ${changed.map(s => `${s.name} → ${s.options[s.current]?.label ?? 'custom'}`).join(', ')}`
+    : `${preset.name} is now the default. Your settings already matched it.`);
+  for (const s of changed) {
+    const row = document.querySelector(`.gfx-row[data-setting="${s.id}"]`);
+    row?.classList.add('changed');
+    setTimeout(() => row?.classList.remove('changed'), 3000);
   }
 }
 
@@ -92,7 +122,7 @@ function render() {
     card.setAttribute('aria-checked', String(p.id === s.preset));
     card.innerHTML = `<span class="preset-name">${esc(p.name)}${p.id === recommended ? '<span class="badge">Best for this PC</span>' : ''}</span>
       <span class="preset-summary">${esc(p.summary)}</span>`;
-    card.addEventListener('click', () => act('/api/preset', { preset: p.id }, `${p.name} is now the default`));
+    card.addEventListener('click', () => applyPreset(p));
     $('presets').append(card);
   }
   const current = s.presets.find(p => p.id === s.preset);
@@ -100,8 +130,8 @@ function render() {
     ? current.details.map(d => `<li>${esc(d)}</li>`).join('')
     : '<li>Your current settings don\'t match a preset. Pick one to apply it.</li>';
 
-  $('fullscreen').checked = s.fullscreen;
   $('show-fps').checked = s.showFps;
+  renderGraphics();
 
   // Folders
   $('folders').innerHTML = '';
@@ -161,6 +191,58 @@ function renderDock() {
   }
 }
 
+function renderGraphics() {
+  $('graphics').innerHTML = '';
+  for (const section of state.graphics) {
+    const panel = document.createElement('section');
+    panel.className = 'panel gfx-section';
+    panel.innerHTML = `<h3>${esc(section.name)}</h3>`;
+    for (const setting of section.settings) {
+      const row = document.createElement('div');
+      row.className = 'gfx-row';
+      row.dataset.setting = setting.id;
+      const presetTag = setting.byPreset
+        ? ' <span class="chip" title="Picking a preset under “How games run” changes this setting">Preset</span>'
+        : '';
+      row.innerHTML = `<div><div class="gfx-name">${esc(setting.name)}${presetTag}</div><div class="gfx-help">${esc(setting.help)}</div></div>`;
+
+      const group = document.createElement('div');
+      group.className = 'segmented';
+      group.setAttribute('role', 'radiogroup');
+      group.setAttribute('aria-label', setting.name);
+      setting.options.forEach((option, i) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.setAttribute('role', 'radio');
+        b.setAttribute('aria-checked', String(i === setting.current));
+        b.textContent = option.label;
+        b.addEventListener('click', () => act('/api/graphics', { setting: setting.id, option: i },
+          `${setting.name}: ${option.label}`));
+        group.append(b);
+      });
+      row.append(group);
+
+      const choice = document.createElement('div');
+      const current = setting.options[setting.current];
+      choice.className = current ? 'gfx-choice' : 'gfx-choice custom';
+      choice.textContent = current ? current.help : 'config.json has a value Mochi doesn\'t list. Pick an option to replace it.';
+      row.append(choice);
+      panel.append(row);
+    }
+    $('graphics').append(panel);
+  }
+}
+
+function showTab(name) {
+  const graphics = name === 'graphics';
+  $('tab-games').setAttribute('aria-selected', String(!graphics));
+  $('tab-graphics').setAttribute('aria-selected', String(graphics));
+  $('games-view').hidden = graphics;
+  $('graphics-view').hidden = !graphics;
+  $('add-folder').hidden = graphics;
+  if (graphics && selectedId !== null) select(selectedId);
+}
+
 function renderHardware() {
   const h = hardware;
   const display = h.display.width ? `${h.display.width}×${h.display.height} at ${h.display.hz} Hz` : 'Unknown';
@@ -169,7 +251,8 @@ function renderHardware() {
     <dt>Graphics</dt><dd>${esc(h.gpu)} <span class="muted">(${h.integrated ? 'integrated' : 'dedicated'})</span></dd>
     <dt>Memory</dt><dd>${h.ramGb} GB</dd>
     <dt>Display</dt><dd>${display}</dd>`;
-  $('pc-notes').innerHTML = h.warnings.map(w => `<li>${esc(w)}</li>`).join('');
+  $('pc-notes').innerHTML = h.notes.map(n => `<li class="good">${esc(n)}</li>`).join('')
+    + h.warnings.map(w => `<li>${esc(w)}</li>`).join('');
 }
 
 function presetChip(preset) {
@@ -205,16 +288,16 @@ function toast(message, isError = false) {
   el.classList.toggle('error', isError);
   el.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), isError ? 5000 : 2600);
+  toastTimer = setTimeout(() => el.classList.remove('show'), Math.max(isError ? 5000 : 2600, message.length * 50));
 }
 
-$('fullscreen').addEventListener('change', e => act('/api/options', { fullscreen: e.target.checked },
-  e.target.checked ? 'Games open fullscreen' : 'Games open in a window'));
+$('tab-games').addEventListener('click', () => showTab('games'));
+$('tab-graphics').addEventListener('click', () => showTab('graphics'));
 $('show-fps').addEventListener('change', e => act('/api/options', { showFps: e.target.checked }));
 $('add-folder').addEventListener('click', () => act('/api/folders/add', {}, 'Game folders updated'));
 $('empty-add').addEventListener('click', () => act('/api/folders/add', {}, 'Game folders updated'));
 $('choose-exe').addEventListener('click', () => act('/api/exe/choose'));
-$('open-config').addEventListener('click', () => act('/api/open-config'));
+$('open-config').addEventListener('click', () => act('/api/open-config', {}, 'Opened the shadPS4 settings folder in File Explorer'));
 $('big-picture').addEventListener('click', () => act('/api/big-picture', {}, 'Opening Big Picture…'));
 $('play').addEventListener('click', () => {
   const game = state.games.find(g => g.id === selectedId);
@@ -246,5 +329,5 @@ document.addEventListener('keydown', e => {
   }
 })();
 
-// Tell mochi.py the window is still open; it quits shortly after the pings stop
-setInterval(() => api('/api/ping').catch(() => {}), 3000);
+// Tell mochi.py the window is still open; it quits shortly after this connection closes
+new EventSource(`/api/alive?t=${encodeURIComponent(token)}`);

@@ -3,6 +3,7 @@ discovery. No UI code here, so it can be tested on its own."""
 
 import json
 import os
+import re
 import struct
 import subprocess
 from dataclasses import dataclass, field
@@ -16,6 +17,10 @@ PRESET_ORDER = ["performance", "balanced", "quality"]
 
 # Words that only appear in dedicated (non-integrated) GPU names
 DEDICATED_GPU_HINTS = ("geforce", "rtx", "gtx", "quadro", "radeon rx", "radeon pro", "arc a", "arc b")
+
+# The PC Mochi's presets are tuned on: Ryzen 5 5600G with its integrated Radeon Vega 7
+REFERENCE_CPU = "5600G"
+REFERENCE_PC = "Ryzen 5 5600G with Radeon Vega 7 graphics"
 
 
 # ---- Hardware ------------------------------------------------------------------
@@ -37,10 +42,30 @@ class Hardware:
     def integrated(self):
         return not is_dedicated(self.main_gpu["name"])
 
+    @property
+    def is_reference_pc(self):
+        return REFERENCE_CPU.lower() in self.cpu.lower() and self.integrated
+
 
 def is_dedicated(gpu_name):
     name = gpu_name.lower()
     return any(hint in name for hint in DEDICATED_GPU_HINTS)
+
+
+def is_basic_intel_gpu(gpu_name):
+    """Intel HD/UHD Graphics: entry-level integrated GPUs, far slower than Iris Xe, Arc or a Vega 7."""
+    name = gpu_name.lower()
+    return "intel" in name and ("uhd graphics" in name or "hd graphics" in name)
+
+
+def is_missing_gpu_driver(gpu_name):
+    name = gpu_name.lower()
+    return "basic display" in name or "basic render" in name
+
+
+def is_low_power_cpu(cpu_name):
+    """Laptop CPUs ending in U or Y (e.g. i5-8265U, Ryzen 5 5500U) run at 15 W or less."""
+    return re.search(r"\d{4,5}[UY]\b", cpu_name) is not None
 
 
 _HW_SCRIPT = (
@@ -73,14 +98,33 @@ def detect_hardware():
 
 
 def recommend_preset(hw):
-    """Integrated graphics are the bottleneck for PS4 emulation, so they get Performance."""
+    """The GPU is the bottleneck for PS4 emulation, so integrated graphics get Performance."""
     return "performance" if hw.integrated else "balanced"
+
+
+def hardware_notes(hw):
+    """Good news about this PC, shown above the warnings."""
+    if hw.is_reference_pc:
+        return [f"This is the PC Mochi is tuned on ({REFERENCE_PC}). Performance is set up for it."]
+    return []
 
 
 def hardware_warnings(hw):
     warnings = []
-    if hw.integrated:
-        warnings.append("Integrated graphics: expect low frame rates in demanding 3D games.")
+    gpu = hw.main_gpu["name"]
+    if is_missing_gpu_driver(gpu):
+        warnings.append(f"Windows is using “{gpu}”, so no graphics driver is installed. "
+                        "Install your GPU's driver; shadPS4 needs Vulkan to run.")
+    elif is_basic_intel_gpu(gpu):
+        warnings.append(f"{gpu} is much slower than the Vega 7 Mochi is tuned on, and far below a PS4. "
+                        "Expect most 3D games to run very slowly; 2D and lighter games have the best chance.")
+    elif hw.integrated and not hw.is_reference_pc:
+        warnings.append(f"{gpu} is integrated graphics: expect low frame rates in demanding 3D games.")
+    elif hw.integrated:
+        warnings.append("The Vega 7 is the bottleneck: expect 20–30 fps in heavy 3D games.")
+    if is_low_power_cpu(hw.cpu):
+        warnings.append(f"{hw.cpu} is a low-power laptop CPU. Plug in the charger and set Windows' "
+                        "power mode to Best performance while playing.")
     if hw.ram_gb and hw.ram_gb < 15:
         warnings.append(f"{hw.ram_gb:g} GB RAM is tight; 16 GB or more (dual channel) helps a lot.")
     return warnings
@@ -145,13 +189,178 @@ def apply_global_preset(udir, preset):
     return config
 
 
-def set_fullscreen(udir, fullscreen):
+# ---- Graphics & display settings -----------------------------------------------
+# Only settings the shadPS4 engine really applies. Each option lists the exact
+# config.json values it writes.
+
+def _option(label, help_text, **groups):
+    return {"label": label, "help": help_text, "values": groups}
+
+
+def _toggle(group, key, off_help, on_help):
+    return [_option("Off", off_help, **{group: {key: False}}), _option("On", on_help, **{group: {key: True}})]
+
+
+GRAPHICS_SECTIONS = [
+    {"id": "display", "name": "Display", "settings": [
+        {"id": "display_mode", "name": "Display mode",
+         "help": "How the game window opens.",
+         "options": [
+             _option("Windowed", "A normal window you can move and resize.",
+                     GPU={"full_screen": False, "full_screen_mode": "Windowed"}),
+             _option("Borderless fullscreen", "Fills the screen at your desktop resolution. Switching apps is instant.",
+                     GPU={"full_screen": True, "full_screen_mode": "Fullscreen (Borderless)"}),
+             _option("Exclusive fullscreen", "Takes over the display in its current mode. Switching apps is slower.",
+                     GPU={"full_screen": True, "full_screen_mode": "Fullscreen"}),
+         ]},
+        {"id": "window_size", "name": "Window size",
+         "help": "Size of the game window in Windowed mode. Fullscreen always fills the screen. "
+                 "Games still render at their own resolution.",
+         "options": [_option(f"{w} × {h}", "", GPU={"window_width": w, "window_height": h})
+                     for w, h in ((1280, 720), (1600, 900), (1920, 1080), (2560, 1440), (3840, 2160))]},
+        {"id": "vsync", "name": "VSync",
+         "help": "How finished frames are shown on your screen.",
+         "options": [
+             _option("On (Mailbox)", "No tearing, with low input delay.", GPU={"present_mode": "Mailbox"}),
+             _option("On (FIFO)", "Classic VSync: no tearing and steady pacing, slightly more input delay. "
+                                  "Try it if you see stutter.", GPU={"present_mode": "Fifo"}),
+             _option("Off (Immediate)", "Lowest input delay. The picture can tear.",
+                     GPU={"present_mode": "Immediate"}),
+         ]},
+        {"id": "hdr", "name": "HDR",
+         "help": "HDR output for games that support it, on an HDR screen with HDR turned on in Windows.",
+         "options": _toggle("GPU", "hdr_allowed", "Standard (SDR) output.", "HDR output when the game supports it.")},
+    ]},
+    {"id": "graphics", "name": "Graphics", "settings": [
+        {"id": "console_mode", "name": "Console mode",
+         "help": "Which PS4 model the game sees. Only games with PS4 Pro support change.",
+         "options": [
+             _option("PS4", "The standard PS4 graphics.", General={"neo_mode": False}),
+             _option("PS4 Pro", "Games with PS4 Pro support use their Pro graphics, usually a higher "
+                                "resolution or frame rate. Much heavier on the GPU.", General={"neo_mode": True}),
+         ]},
+        {"id": "upscaling", "name": "Upscaling (FSR 1)",
+         "help": "AMD FSR 1 upscales the game's picture to your window size. It only runs when the game "
+                 "renders below the window size.",
+         "options": _toggle("GPU", "fsr_enabled", "Simple scaling, the cheapest.",
+                            "Sharper upscaling, costs a little GPU time.")},
+        {"id": "sharpening", "name": "Sharpening (RCAS)",
+         "help": "Sharpens the picture after FSR upscaling. It only works while upscaling is on.",
+         "options": [
+             _option("Off", "No sharpening.", GPU={"rcas_enabled": False}),
+             _option("Light", "Gentle sharpening.", GPU={"rcas_enabled": True, "rcas_attenuation": 1000}),
+             _option("Normal", "shadPS4's default strength.", GPU={"rcas_enabled": True, "rcas_attenuation": 250}),
+             _option("Strong", "Maximum sharpening. Can look grainy.",
+                     GPU={"rcas_enabled": True, "rcas_attenuation": 0}),
+         ]},
+        {"id": "anisotropic_filtering", "name": "Anisotropic filtering",
+         "help": "Keeps textures sharp on surfaces seen at an angle, such as roads and floors. "
+                 "Needs the Mochi engine built from this version.",
+         "options": [
+             _option("Game's choice", "Uses whatever the game asks for.", GPU={"anisotropic_filtering": 0}),
+             _option("Off", "Turns it off, even where the game uses it. Blurriest, slightly faster.",
+                     GPU={"anisotropic_filtering": 1}),
+             *[_option(f"{n}x", "Higher is sharper in the distance and costs a little more GPU time.",
+                       GPU={"anisotropic_filtering": n}) for n in (2, 4, 8, 16)],
+         ]},
+        {"id": "shader_precision", "name": "Shader precision",
+         "help": "How exactly pixel and compute shaders do their math.",
+         "options": [
+             _option("Exact", "Matches the PS4 most closely.", GPU={"fast_shader_math": False}),
+             _option("Fast", "Lets the GPU fuse and simplify math. Faster, with a small risk of visual glitches.",
+                     GPU={"fast_shader_math": True}),
+         ]},
+        {"id": "shader_cache", "name": "Shader cache",
+         "help": "Saves compiled shaders to disk, so stutter mostly goes away after you've seen something once.",
+         "options": [
+             _option("Off", "Shaders compile again every time you play.",
+                     Vulkan={"pipeline_cache_enabled": False, "pipeline_cache_archived": False}),
+             _option("On", "Stored compressed in your shadPS4 folder.",
+                     Vulkan={"pipeline_cache_enabled": True, "pipeline_cache_archived": True}),
+         ]},
+    ]},
+    {"id": "advanced", "name": "Advanced", "settings": [
+        {"id": "readbacks", "name": "GPU readbacks",
+         "help": "Lets the game read back what the GPU drew. Fixes some missing or broken effects.",
+         "options": [
+             _option("Off", "Fastest.", GPU={"readbacks_mode": 0}),
+             _option("Relaxed", "Fixes most readback effects, at a speed cost.", GPU={"readbacks_mode": 1}),
+             _option("Precise", "Most accurate and slowest.", GPU={"readbacks_mode": 2}),
+         ]},
+        {"id": "linear_readbacks", "name": "Linear image readbacks",
+         "help": "Also reads back linear (untiled) images the GPU wrote. A few games need it.",
+         "options": _toggle("GPU", "readback_linear_images_enabled", "Faster.", "More accurate, slower.")},
+        {"id": "copy_gpu_buffers", "name": "Copy GPU command buffers",
+         "help": "Copies each command buffer before the GPU runs it. Fixes games that change a buffer "
+                 "while it's still in use.",
+         "options": _toggle("GPU", "copy_gpu_buffers", "Faster.", "Safer for some games, slower.")},
+        {"id": "vblank", "name": "Vblank rate",
+         "help": "How often the emulated PS4 signals a new screen refresh. Many games tie their speed to "
+                 "it, so anything other than 60 Hz can make a game run too fast.",
+         "options": [_option(f"{hz} Hz", "The PS4's real rate." if hz == 60 else
+                             "Raises the frame-rate cap in some games, and speeds others up.",
+                             GPU={"vblank_frequency": hz})
+                     for hz in (60, 90, 120, 144)]},
+    ]},
+]
+
+# shadPS4's own defaults (src/core/emulator_settings.h), for keys missing from config.json
+SHADPS4_DEFAULTS = {
+    "General": {"neo_mode": False},
+    "GPU": {"full_screen": False, "full_screen_mode": "Windowed", "window_width": 1280, "window_height": 720,
+            "present_mode": "Mailbox", "hdr_allowed": False, "fsr_enabled": False, "rcas_enabled": True,
+            "rcas_attenuation": 250, "anisotropic_filtering": 0, "fast_shader_math": False,
+            "readbacks_mode": 0, "readback_linear_images_enabled": False, "copy_gpu_buffers": False,
+            "vblank_frequency": 60},
+    "Vulkan": {"pipeline_cache_enabled": False, "pipeline_cache_archived": False},
+}
+
+
+def graphics_setting(setting_id):
+    for section in GRAPHICS_SECTIONS:
+        for setting in section["settings"]:
+            if setting["id"] == setting_id:
+                return setting
+    raise ValueError(f"Unknown graphics setting: {setting_id}")
+
+
+def current_option(config, setting):
+    """Index of the option that matches `config`, or None when no option does."""
+    def value(group, key):
+        return config.get(group, {}).get(key, SHADPS4_DEFAULTS[group][key])
+
+    for i, option in enumerate(setting["options"]):
+        if all(value(group, key) == v for group, values in option["values"].items() for key, v in values.items()):
+            return i
+    return None
+
+
+def graphics_state(config, presets=None):
+    preset_keys = {(group, key) for p in (presets or {}).values()
+                   for group, values in p["settings"].items() for key in values}
+    return [{
+        "id": section["id"],
+        "name": section["name"],
+        "settings": [{
+            "id": s["id"],
+            "name": s["name"],
+            "help": s["help"],
+            "options": [{"label": o["label"], "help": o["help"]} for o in s["options"]],
+            "current": current_option(config, s),
+            "byPreset": any((group, key) in preset_keys
+                            for o in s["options"] for group, values in o["values"].items() for key in values),
+        } for s in section["settings"]],
+    } for section in GRAPHICS_SECTIONS]
+
+
+def apply_graphics_option(udir, setting_id, option_index):
+    options = graphics_setting(setting_id)["options"]
+    if not isinstance(option_index, int) or not 0 <= option_index < len(options):
+        raise ValueError("That option doesn't exist.")
     path = Path(udir) / "config.json"
-    config = merge_settings(read_json(path), {"GPU": {
-        "full_screen": fullscreen,
-        "full_screen_mode": "Fullscreen (Borderless)" if fullscreen else "Windowed",
-    }})
+    config = merge_settings(read_json(path), options[option_index]["values"])
     write_json(path, config)
+    return config
 
 
 def game_config_path(udir, serial):
@@ -296,7 +505,7 @@ def launch(exe, **kwargs):
 
 # ---- Launcher's own settings ---------------------------------------------------
 
-DEFAULT_LAUNCHER_SETTINGS = {"exe": str(DEFAULT_EXE), "fullscreen": False, "show_fps": True}
+DEFAULT_LAUNCHER_SETTINGS = {"exe": str(DEFAULT_EXE), "show_fps": True}
 
 
 def load_launcher_settings():
