@@ -1,0 +1,27 @@
+{
+  "name": "Quality",
+  "summary": "Most accurate. Use it when a game shows glitches; it needs a stronger GPU.",
+  "details": [
+    "Exact shader math (no fast-math shortcuts)",
+    "FSR upscaling with RCAS sharpening",
+    "Relaxed GPU readbacks: fixes effects where the game reads GPU results back, at a speed cost",
+    "Pipeline cache on"
+  ],
+  "settings": {
+    "GPU": {
+      "fast_shader_math": false,
+      "fsr_enabled": true,
+      "rcas_enabled": true,
+      "rcas_attenuation": 250,
+      "readbacks_mode": 1,
+      "readback_linear_images_enabled": false,
+      "copy_gpu_buffers": false,
+      "present_mode": "Mailbox",
+      "vblank_frequency": 60
+    },
+    "Vulkan": {
+      "pipeline_cache_enabled": true,
+      "pipeline_cache_archived": true
+    }
+  }
+}

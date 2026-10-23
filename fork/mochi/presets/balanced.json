@@ -1,0 +1,27 @@
+{
+  "name": "Balanced",
+  "summary": "Fast shader math plus FSR upscaling and sharpening for a cleaner image.",
+  "details": [
+    "Fast shader math, as in Performance",
+    "FSR 1 upscales games that render below your window size, with RCAS sharpening",
+    "Pipeline cache on",
+    "GPU readbacks off"
+  ],
+  "settings": {
+    "GPU": {
+      "fast_shader_math": true,
+      "fsr_enabled": true,
+      "rcas_enabled": true,
+      "rcas_attenuation": 250,
+      "readbacks_mode": 0,
+      "readback_linear_images_enabled": false,
+      "copy_gpu_buffers": false,
+      "present_mode": "Mailbox",
+      "vblank_frequency": 60
+    },
+    "Vulkan": {
+      "pipeline_cache_enabled": true,
+      "pipeline_cache_archived": true
+    }
+  }
+}

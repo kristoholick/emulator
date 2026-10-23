@@ -1492,6 +1492,7 @@ cmrc_add_resource_library(embedded-resources
         src/resources/big_picture/trophy.png
         src/resources/bronze.png
         src/resources/gold.png
+        src/resources/mochi.png
         src/resources/platinum.png
         src/resources/shadps4.png
         src/resources/silver.png

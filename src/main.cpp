@@ -113,10 +113,10 @@ int main(int argc, char* argv[]) {
 
     // ---- No-args behavior ----
     if (argc == 1) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "shadPS4",
-                                 "This is a CLI application. Please use the '-b' flag for Big "
-                                 "Picture mode, or QTLauncher for a standalone GUI:\n"
-                                 "https://github.com/shadps4-emu/shadps4-qtlauncher/releases",
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Mochi",
+                                 "This is Mochi's game engine (shadPS4).\n"
+                                 "Open Mochi with fork\\mochi\\Mochi.cmd, or start this program "
+                                 "with the '-b' flag for Big Picture mode.",
                                  nullptr);
         std::cout << app.help();
         return -1;

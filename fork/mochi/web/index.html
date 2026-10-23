@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mochi</title>
+  <link rel="icon" href="mochi.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;800&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <div class="mascot" id="mascot" aria-hidden="true"></div>
+      <div>
+        <h1>Mochi</h1>
+        <p class="tagline">A cozy home for your PS4 games · <span class="engine">engine: shadPS4</span></p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button class="ghost" id="big-picture" type="button">Open Big Picture</button>
+      <button class="ghost" id="open-config" type="button">Settings folder</button>
+    </div>
+  </header>
+
+  <div class="banner" id="exe-banner" hidden>
+    <span>The shadPS4 engine (<code>shadps4.exe</code>) isn't where Mochi expects it. Build it with <code>fork\build.cmd</code>, or show Mochi where it is.</span>
+    <button class="soft" id="choose-exe" type="button">Find shadps4.exe</button>
+  </div>
+
+  <main class="layout">
+    <aside class="side">
+      <section class="panel">
+        <h2>How games run</h2>
+        <p class="hint">Applies to every game unless a game has its own choice.</p>
+        <div class="presets" id="presets" role="radiogroup" aria-label="Default preset"></div>
+        <ul class="details" id="preset-details"></ul>
+        <div class="toggles">
+          <label class="toggle"><input type="checkbox" id="fullscreen"><span class="track"></span>Fullscreen</label>
+          <label class="toggle"><input type="checkbox" id="show-fps"><span class="track"></span>Show FPS counter</label>
+        </div>
+      </section>
+
+      <section class="panel pc" id="pc">
+        <h2>This PC</h2>
+        <dl id="pc-list"><div class="loading">Looking at your hardware…</div></dl>
+        <ul class="notes" id="pc-notes"></ul>
+      </section>
+    </aside>
+
+    <section class="games">
+      <div class="games-head">
+        <h2>Your games</h2>
+        <button class="soft" id="add-folder" type="button">+ Add game folder</button>
+      </div>
+      <div class="folders" id="folders"></div>
+      <div class="grid" id="grid"></div>
+      <div class="empty" id="empty" hidden>
+        <div class="mascot sleepy" id="empty-mascot" aria-hidden="true"></div>
+        <h3>No games yet</h3>
+        <p>Add the folder where your PS4 game dumps live. Each game folder has an <code>eboot.bin</code> and a <code>sce_sys</code> folder inside.</p>
+        <button class="primary" id="empty-add" type="button">Add game folder</button>
+      </div>
+    </section>
+  </main>
+
+  <div class="dock" id="dock" aria-hidden="true">
+    <img class="dock-cover" id="dock-cover" alt="">
+    <div class="dock-info">
+      <div class="dock-title" id="dock-title"></div>
+      <div class="dock-meta" id="dock-meta"></div>
+    </div>
+    <div class="segmented" id="game-preset" role="radiogroup" aria-label="Preset for this game"></div>
+    <button class="primary play" id="play" type="button">Play</button>
+    <button class="close" id="dock-close" type="button" aria-label="Close">×</button>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
