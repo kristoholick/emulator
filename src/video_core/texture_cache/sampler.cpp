@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include "core/emulator_settings.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/texture_cache/sampler.h"
@@ -11,12 +12,24 @@ namespace VideoCore {
 Sampler::Sampler(const Vulkan::Instance& instance, const AmdGpu::Sampler& sampler,
                  const AmdGpu::BorderColorBuffer border_color_base, const bool is_depth) {
     using namespace Vulkan;
-    const bool anisotropy_enable = instance.IsAnisotropicFilteringSupported() &&
-                                   (AmdGpu::IsAnisoFilter(sampler.xy_mag_filter) ||
-                                    AmdGpu::IsAnisoFilter(sampler.xy_min_filter));
+    const bool game_anisotropy = AmdGpu::IsAnisoFilter(sampler.xy_mag_filter) ||
+                                 AmdGpu::IsAnisoFilter(sampler.xy_min_filter);
+    const u32 forced_anisotropy = EmulatorSettings.GetAnisotropicFiltering();
+    const bool is_mipmapped_linear = sampler.xy_min_filter.Value() == AmdGpu::Filter::Bilinear &&
+                                     sampler.mip_filter.Value() != AmdGpu::MipFilter::None;
+    const bool force_anisotropy = forced_anisotropy != 0 && !is_depth &&
+                                  sampler.filter_mode.Value() == AmdGpu::FilterMode::Blend &&
+                                  !sampler.force_unnormalized &&
+                                  (game_anisotropy || is_mipmapped_linear);
+    const float requested_anisotropy =
+        force_anisotropy ? static_cast<float>(forced_anisotropy) : sampler.MaxAniso();
+    const bool anisotropy_enable =
+        instance.IsAnisotropicFilteringSupported() &&
+        (force_anisotropy ? requested_anisotropy > 1.0f : game_anisotropy);
     const float max_anisotropy =
-        anisotropy_enable ? std::clamp(sampler.MaxAniso(), 1.0f, instance.MaxSamplerAnisotropy())
-                          : 1.0f;
+        anisotropy_enable
+            ? std::clamp(requested_anisotropy, 1.0f, instance.MaxSamplerAnisotropy())
+            : 1.0f;
     auto border_color = LiverpoolToVK::BorderColor(sampler.border_color_type);
     if (border_color == vk::BorderColor::eFloatCustomEXT &&
         !instance.IsCustomBorderColorSupported()) {
