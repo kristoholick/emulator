@@ -14,8 +14,10 @@ set "PATH=%VS%\VC\Tools\Llvm\x64\bin;%PATH%"
 
 cd /d "%~dp0.."
 cmake --preset x64-Clang-Release || exit /b 1
-rem 8 jobs instead of 14: Clang can use 1-2 GB per job and this PC has ~12 GB of RAM
-cmake --build Build\x64-Clang-Release --parallel 8 || exit /b 1
+rem Clang can use 1-2 GB per job and this PC has ~12 GB of usable RAM. If the build fails with
+rem "LLVM ERROR: out of memory", close other apps or lower the jobs:  set MOCHI_JOBS=3
+if not defined MOCHI_JOBS set MOCHI_JOBS=6
+cmake --build Build\x64-Clang-Release --parallel %MOCHI_JOBS% || exit /b 1
 
 echo.
 echo Built: %CD%\Build\x64-Clang-Release\shadps4.exe
