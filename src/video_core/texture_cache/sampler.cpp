@@ -27,9 +27,8 @@ Sampler::Sampler(const Vulkan::Instance& instance, const AmdGpu::Sampler& sample
         instance.IsAnisotropicFilteringSupported() &&
         (force_anisotropy ? requested_anisotropy > 1.0f : game_anisotropy);
     const float max_anisotropy =
-        anisotropy_enable
-            ? std::clamp(requested_anisotropy, 1.0f, instance.MaxSamplerAnisotropy())
-            : 1.0f;
+        anisotropy_enable ? std::clamp(requested_anisotropy, 1.0f, instance.MaxSamplerAnisotropy())
+                          : 1.0f;
     auto border_color = LiverpoolToVK::BorderColor(sampler.border_color_type);
     if (border_color == vk::BorderColor::eFloatCustomEXT &&
         !instance.IsCustomBorderColorSupported()) {
